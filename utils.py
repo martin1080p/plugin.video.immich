@@ -1,4 +1,5 @@
 import http.client
+import json
 import sys
 from datetime import datetime
 from urllib.parse import urlencode, urlparse
@@ -113,14 +114,62 @@ def set_locale():
     return True
 
 
+class ImmichApiError(Exception):
+    """Raised when the Immich API answers with an error status."""
+
+    def __init__(self, method, path, status, body):
+        self.status = status
+        super().__init__(f"{method} {path} failed with HTTP {status}: {body}")
+
+
+def api_request(method, path, params=None, body=None):
+    """Call the Immich API and return the decoded JSON response.
+
+    Immich rejects unknown query parameters, so only send what the server knows.
+    """
+    headers = {
+        "Accept": "application/json",
+        "User-agent": xbmc.getUserAgent(),
+        "x-api-key": API_KEY,
+    }
+    if params:
+        # Booleans have to be sent lowercase for the server to accept them
+        query = {
+            k: str(v).lower() if isinstance(v, bool) else v
+            for k, v in params.items()
+            if v is not None
+        }
+        path = f"{path}?{urlencode(query)}"
+    payload = None
+    if body is not None:
+        payload = json.dumps(body)
+        headers["Content-Type"] = "application/json"
+
+    conn.request(method, path, payload, headers)
+    response = conn.getresponse()
+    data = response.read().decode("utf-8")
+    if response.status >= 400:
+        raise ImmichApiError(method, path, response.status, data[:500])
+    return json.loads(data)
+
+
+def api_get(path, params=None):
+    return api_request("GET", path, params=params)
+
+
+def api_post(path, body):
+    return api_request("POST", path, body=body)
+
+
 def get_playback(id, type=None):
     if type == "IMAGE":
-        # if item["type"] == "IMAGE":
         return f"{RAW_SERVER_URL}/api/assets/{id}/thumbnail?size=preview|x-api-key={API_KEY}"
     else:
         return f"{RAW_SERVER_URL}/api/assets/{id}/video/playback|x-api-key={API_KEY}"
 
 
+def get_original(id):
+    return f"{RAW_SERVER_URL}/api/assets/{id}/original|x-api-key={API_KEY}"
 
 
 

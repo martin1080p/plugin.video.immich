@@ -1,5 +1,9 @@
 ### Kodi addon for Immich
 
+Tested against the Immich 3.1.0 API. Immich 3.0.0 or newer is required, because
+the timeline endpoints changed in Immich 2.0.0 and albums stopped embedding
+their assets in 3.0.0.
+
 How to use:
 - Install Immich Server anywhere
 - Install this addon from zip file

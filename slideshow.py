@@ -1,4 +1,3 @@
-import json
 from datetime import datetime
 
 import xbmc
@@ -7,12 +6,12 @@ import xbmcgui
 import xbmcplugin
 
 import iso8601
+from models import ItemAsset
 from utils import (
-    API_KEY,
     HANDLE,
-    RAW_SERVER_URL,
-    conn,
+    api_post,
     datelong,
+    get_playback,
     strftime_polyfill,
     timestamp,
 )
@@ -36,34 +35,26 @@ def slideshow():
     if a > b:
         a, b = b, a
 
-    headers = {
-        "Accept": "application/json",
-        "User-agent": xbmc.getUserAgent(),
-        "x-api-key": API_KEY,
-        "Content-Type": "application/json",
-    }
-    conn.request(
-        "POST",
+    resp = api_post(
         "/api/search/metadata",
-        body=json.dumps(
-            {
-                "takenBefore": b.strftime("%Y-%m-%dT23:59:59.000Z"),
-                "takenAfter": a.strftime("%Y-%m-%dT00:00:00.000Z"),
-                "page": 1,
-                "withExif": True,
-            }
-        ),
-        headers=headers,
+        {
+            "takenBefore": b.strftime("%Y-%m-%dT23:59:59.000Z"),
+            "takenAfter": a.strftime("%Y-%m-%dT00:00:00.000Z"),
+            "page": 1,
+            "withExif": True,
+        },
     )
-    resp = json.loads(conn.getresponse().read().decode("utf-8"))
+    assets = [
+        ItemAsset.from_api_response(i) for i in resp["assets"].get("items", [])
+    ]
 
     playlist = xbmc.PlayList(1)
-    for i in resp:
+    for asset in assets:
         playlist.add(
-            f"{RAW_SERVER_URL}/api/assets/{i['id']}/video/playback|x-api-key={API_KEY}",
+            get_playback(asset.id, asset.type),
             xbmcgui.ListItem(
                 strftime_polyfill(
-                    iso8601.parse_date(i["localDateTime"][:-5]),
+                    iso8601.parse_date(asset.localDateTime),
                     datelong + " " + timestamp,
                 )
             ),

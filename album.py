@@ -1,34 +1,28 @@
-import json
 import sys
-from datetime import datetime
 
-import xbmc
 import xbmcgui
 import xbmcplugin
 
 import iso8601
 from models import Album, ItemAsset
 from utils import (
-    API_KEY,
-    RAW_SERVER_URL,
-    SHARED_ONLY,
-    conn,
+    api_get,
+    api_post,
     get_asset_name,
+    get_original,
+    get_playback,
     get_url,
     getThumbUrl,
 )
 
 HANDLE = int(sys.argv[1])
 
+# Maximum allowed by /api/search/metadata
+PAGE_SIZE = 1000
+
 
 def list_albums():
-    headers = {
-        "Accept": "application/json",
-        "User-agent": xbmc.getUserAgent(),
-        "x-api-key": API_KEY,
-    }
-    conn.request("GET", "/api/albums", "", headers)
-    res = json.loads(conn.getresponse().read().decode("utf-8"))
+    res = api_get("/api/albums")
     res = [Album.from_api_response(i) for i in res]
 
     items = [
@@ -48,17 +42,35 @@ def list_albums():
     xbmcplugin.endOfDirectory(HANDLE, cacheToDisc=False)
 
 
+def get_album_assets(id):
+    """Return every asset of an album.
+
+    Immich 3.0.0 dropped the embedded ``assets`` list from the album response,
+    so the assets are searched for separately. Older servers still ship them
+    inline and are answered from that list.
+    """
+    info = Album.from_api_response(api_get(f"/api/albums/{id}"))
+    if info.assets:
+        return info.assets
+
+    body = {"albumIds": [id], "withExif": True, "size": PAGE_SIZE, "page": 1}
+    order = (info.order or "").lower()
+    if order in ("asc", "desc"):
+        body["order"] = order
+
+    assets = []
+    while body["page"]:
+        res = api_post("/api/search/metadata", body)["assets"]
+        assets.extend(ItemAsset.from_api_response(i) for i in res.get("items", []))
+        next_page = res.get("nextPage")
+        body["page"] = int(next_page) if next_page else None
+    return assets
+
+
 def album(id):
     xbmcplugin.setContent(HANDLE, "images")
 
-    headers = {
-        "Accept": "application/json",
-        "User-agent": xbmc.getUserAgent(),
-        "x-api-key": API_KEY,
-    }
-    conn.request("GET", f"/api/albums/{id}", "", headers)
-    res = json.loads(conn.getresponse().read().decode("utf-8"))["assets"]
-    res = [ItemAsset.from_api_response(i) for i in res]
+    res = get_album_assets(id)
 
     for i in res:
         if not i.exifInfo.dateTimeOriginal:
@@ -68,7 +80,7 @@ def album(id):
 
     items = [
         (
-            f"{RAW_SERVER_URL}/api/assets/{asset.id}/original|x-api-key={API_KEY}",
+            get_original(asset.id) if asset.is_image else get_playback(asset.id),
             xbmcgui.ListItem(get_asset_name(asset)),
             False,
         )
@@ -76,7 +88,8 @@ def album(id):
     ]
     for item, asset in zip(items, res):
         item[1].setArt({"thumb": getThumbUrl(asset.id)})
-        item[1].setProperty("MimeType", asset.originalMimeType)
+        if asset.originalMimeType:
+            item[1].setProperty("MimeType", asset.originalMimeType)
         item[1].setDateTime(asset.exifInfo.dateTimeOriginal)
     xbmcplugin.addDirectoryItems(HANDLE, items, len(items))
     xbmcplugin.addSortMethod(HANDLE, sortMethod=xbmcplugin.SORT_METHOD_DATE)
